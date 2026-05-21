@@ -53,6 +53,19 @@ AIRPORT_TYPES_RELEVANT = {
     "small_airport",
 }
 
+# OurAirports frequency type codes map
+FREQ_TYPE_MAP = {
+    "TOWER": ["TWR"],
+    "GROUND": ["GND"],
+    "DELIVERY": ["CLD"],
+    "CLEARANCE": ["CLD"],
+    "APPROACH": ["APP", "DIR", "ARR"],
+    "APCH": ["APP", "DIR"],
+    "DEPARTURE": ["DEP"],
+    "CENTER": ["ACC"],
+    "ATIS": ["ATIS"],
+}
+
 
 def _load_airports(path: str) -> dict[str, Airport]:
     airports: dict[str, Airport] = {}
@@ -152,7 +165,7 @@ class NavDatabase:
         data_path = Path(data_dir)
         airports_csv = str(data_path / "airports.csv")
         runways_csv = str(data_path / "runways.csv")
-        freqs_csv = str(data_path / "com_frequencies.csv")
+        freqs_csv = str(data_path / "airport-frequencies.csv")
         navaids_csv = str(data_path / "navaids.csv")
 
         self.airports = _load_airports(airports_csv)
@@ -190,9 +203,14 @@ class NavDatabase:
         return freqs
 
     def get_frequency(self, icao: str, freq_type: str) -> Optional[float]:
-        freqs = self.get_frequencies(icao, freq_type)
-        if freqs:
-            return freqs[0].frequency_mhz
+        # Try the exact type first, then all mapped OurAirports codes
+        candidates = [freq_type.upper()]
+        mapped = FREQ_TYPE_MAP.get(freq_type.upper(), [])
+        candidates.extend(mapped)
+        for t in candidates:
+            freqs = self.get_frequencies(icao, t)
+            if freqs:
+                return freqs[0].frequency_mhz
         return None
 
     def get_country_code(self, icao: str) -> Optional[str]:

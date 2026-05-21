@@ -1,6 +1,8 @@
 """Speech-to-Text service using faster-whisper."""
 
 import logging
+import subprocess
+import tempfile
 from typing import Optional
 
 logger = logging.getLogger("openatc.stt")
@@ -35,12 +37,37 @@ class STTService:
             logger.error(f"Failed to load Whisper model: {e}")
             raise
 
+    def _decode_opus_to_pcm(self, opus_data: bytes) -> bytes:
+        """Decode Opus bytes to raw PCM 16-bit mono 16kHz using ffmpeg."""
+        with tempfile.NamedTemporaryFile(suffix=".opus") as tmp:
+            tmp.write(opus_data)
+            tmp.flush()
+            try:
+                result = subprocess.run(
+                    ["ffmpeg", "-y", "-i", tmp.name,
+                     "-f", "s16le", "-acodec", "pcm_s16le",
+                     "-ar", "16000", "-ac", "1",
+                     "-loglevel", "error", "pipe:1"],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    logger.error(f"ffmpeg Opus decode failed: {result.stderr.decode()}")
+                    return opus_data  # fallback — may produce garbage
+                return result.stdout
+            except FileNotFoundError:
+                logger.warning("ffmpeg not found, passing raw Opus to Whisper")
+                return opus_data
+
     def transcribe(self, audio_bytes: bytes, sample_rate: int = 16000) -> str:
-        """Transcribe PCM 16-bit mono audio to text.
+        """Transcribe audio to text.
+
+        Accepts Opus-encoded bytes (from client) or raw PCM 16-bit mono.
+        If input is Opus, decodes via ffmpeg first.
 
         Args:
-            audio_bytes: Raw PCM 16-bit mono audio data
-            sample_rate: Sample rate of the audio (default 16000)
+            audio_bytes: Opus or raw PCM 16-bit mono audio data
+            sample_rate: Expected sample rate of the audio (default 16000)
 
         Returns:
             Transcribed text string
@@ -49,8 +76,14 @@ class STTService:
 
         import numpy as np
 
+        # Try to detect Opus header and decode
+        if len(audio_bytes) > 3 and audio_bytes[:3] == b"Ogg":
+            pcm = self._decode_opus_to_pcm(audio_bytes)
+        else:
+            pcm = audio_bytes
+
         # Convert bytes to float32 array (faster-whisper expects [-1, 1] float32)
-        audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        audio_int16 = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
         audio_float32 = audio_int16 / 32768.0
 
         segments, info = self._model.transcribe(
