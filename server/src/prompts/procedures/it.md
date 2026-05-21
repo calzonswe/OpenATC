@@ -1,0 +1,12 @@
+# Italy (LIxx airports)
+- Transition altitude: varies (typically FL100 in northern Italy, FL130 in the south)
+- QNH in hPa (hectopascal)
+- Center calls: "Roma Control", "Milano Control", "Brindisi Control", etc.
+- Tower calls: "[Airport] Tower" or "[Airport] Torre"
+- Approach calls: "[Airport] Approach" or "[Airport] Avvicinamento"
+- Ground calls: "[Airport] Ground"
+- Delivery calls: "[Airport] Delivery" or "[Airport] Autorizzazione"
+- Use Italian locality names
+- Standard ICAO phraseology in English
+- Squawk 7000 for VFR
+- Frequencies in MHz

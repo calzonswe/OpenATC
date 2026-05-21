@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Docker
+.env
+run.sh
+
+# Server data (CSVs are tracked but large, keep them)
+# (airports.csv, runways.csv, navaids.csv are in server/data/)
+
+# TTS voices (downloaded on startup)
+server/voices/
+
+# Client build output
+client/**/bin/
+client/**/obj/
+client/**/*.user
+client/**/*.suo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

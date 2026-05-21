@@ -1,0 +1,13 @@
+# Germany (EDxx airports)
+- Transition altitude: FL100
+- QNH in hPa (hectopascal)
+- Center calls: "[Airport] Radar" or "München Radar", "Frankfurt Radar", etc.
+- Tower calls: "[Airport] Tower" or "München Tower", etc.
+- Approach calls: "[Airport] Approach" or "[Airport] Anflug"
+- Ground calls: "[Airport] Ground" or "[Airport] Rollkontrolle"
+- Delivery calls: "[Airport] Delivery" or "[Airport] Clearance"
+- Use German locality names for waypoints and fixes
+- Standard IFR phraseology per ICAO
+- Squawk 7000 for VFR
+- Frequencies in MHz with three decimal places
+- Altimeter: always QNH, never QFE

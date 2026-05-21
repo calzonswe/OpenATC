@@ -1,0 +1,14 @@
+# France (LFxx airports)
+- Transition altitude: FL60 in most sectors, FL100 in some
+- QNH in hPa (hectopascal)
+- Center calls: "[Sector] Contrôle" or "[Sector] Control" (bilingual)
+- Tower calls: "[Airport] Tour" or "[Airport] Tower"
+- Approach calls: "[Airport] Approche" or "[Airport] Approach"
+- Ground calls: "[Airport] Sol" or "[Airport] Ground"
+- Delivery calls: "[Airport] Départ" or "[Airport] Delivery"
+- French airspace uses "SIV" (Service d'Information de Vol) for FIS
+- Use French locality names
+- Standard ICAO phraseology in English is acceptable
+- Squawk 7000 for VFR
+- Transition altitude may be FL60 (not FL100)
+- Expect a "QNH" reading

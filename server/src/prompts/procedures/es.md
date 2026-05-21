@@ -1,0 +1,13 @@
+# Spain (LExx airports)
+- Transition altitude: varies (typically FL130 in Madrid, FL100 in Barcelona)
+- QNH in hPa (hectopascal)
+- Center calls: "Madrid Control", "Barcelona Control", etc.
+- Tower calls: "[Airport] Tower"
+- Approach calls: "[Airport] Approach" or "[Airport] Aproximación"
+- Ground calls: "[Airport] Ground" or "[Airport] Plataforma"
+- Delivery calls: "[Airport] Delivery"
+- Use Spanish locality names for waypoints
+- Standard ICAO phraseology in English
+- Squawk 7000 for VFR
+- Transition altitude may be up to FL130
+- Frequencies in MHz

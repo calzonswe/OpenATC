@@ -1,0 +1,15 @@
+# United Kingdom (EGxx airports)
+- Transition altitude: varies by airport (typically 6000ft for London airports, 5000ft elsewhere)
+- QNH in hPa (hectopascal)
+- Center calls: "London Control", "London Information", "Scottish Control", etc.
+- Tower calls: "[Airport] Tower"
+- Approach calls: "[Airport] Approach" or "[Airport] Director"
+- Ground calls: "[Airport] Ground"
+- Delivery calls: "[Airport] Delivery"
+- Use "Flight Level" or "Level" (e.g., "Level 350" is common in UK)
+- UK phraseology: use "pass your message" when unclear
+- Squawk 7000 for VFR, 2000 for IFR if no code assigned
+- Frequencies in MHz with three decimal places
+- Always use QNH (never QFE in civilian)
+- Use "Surface wind" for wind reports
+- Use "Runway in use" for active runway

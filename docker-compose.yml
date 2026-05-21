@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: openatc-ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q -O - http://localhost:11434/api/tags > /dev/null 2>&1"]
+      interval: 15s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  openatc-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: openatc-server
+    ports:
+      - "${SERVER_PORT:-8765}:8765"
+    environment:
+      - LLM_HOST=http://ollama:11434
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b}
+    volumes:
+      - tts_voices:/app/voices
+      - ${SERVER_CONFIG:-./server/config.toml}:/app/config.toml
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  tts_voices:

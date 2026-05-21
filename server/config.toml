@@ -1,0 +1,29 @@
+[server]
+host = "0.0.0.0"
+port = 8765
+log_level = "info"
+
+[models]
+stt_model = "base"          # tiny, base, small, medium, large
+stt_language = "en"         # or "de" for German, "fr" for French, etc.
+llm_model = "qwen2.5:7b"
+llm_host = "http://ollama:11434"
+tts_sample_rate = 22050
+
+[voices]
+directory = "voices"
+auto_download = true
+role_map = [
+    { role = "delivery", voice = "delivery" },
+    { role = "ground", voice = "ground" },
+    { role = "tower", voice = "tower" },
+    { role = "departure", voice = "departure" },
+    { role = "center", voice = "center" },
+    { role = "approach", voice = "approach" },
+]
+
+[atc]
+telemetry_interval = 3.0
+trigger_cooldown = 15.0
+history_window = 15
+transition_alt_default = 6000
