@@ -5,7 +5,7 @@ import struct
 import subprocess
 import tempfile
 import zlib
-from typing import Optional
+from typing import Optional, Union
 
 logger = logging.getLogger("openatc.stt")
 
@@ -160,7 +160,7 @@ class STTService:
         # Valid Opus packet config values: 0..15 (mono) or 16..31 (stereo)
         return config <= 31
 
-    def transcribe(self, audio: bytes | list[bytes], sample_rate: int = 16000) -> str:
+    def transcribe(self, audio: Union[bytes, list[bytes]], sample_rate: int = 16000) -> str:
         """Transcribe audio to text.
 
         Accepts raw Opus packets (as a list of frame bytes from the client),
