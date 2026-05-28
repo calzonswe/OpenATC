@@ -34,7 +34,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install ML deps (lazy-loaded at runtime)
-RUN pip install --no-cache-dir faster-whisper>=1.1.0 ollama>=0.4.0
+RUN pip install --no-cache-dir faster-whisper==1.1.0 ollama==0.4.0
 
 # Copy application code, nav data, scripts, config
 COPY src/ src/

@@ -4,16 +4,11 @@ Evaluates telemetry against conditions and pushes unsolicited ATC instructions.
 """
 
 import logging
-import math
 import time
 from typing import Optional
 
-from src.models.state import CallsignState, ExchangeEntry
-from src.models.telemetry import Telemetry
-from src.services.llm import LLMService
-from src.services.tts import TTSService
-from src.services.nav import NavDatabase
-from src.services.atc_session import ATCSession
+from src.models.state import CallsignState
+from src.services.nav import NavDatabase, _haversine
 
 logger = logging.getLogger("openatc.triggers")
 
@@ -28,11 +23,8 @@ class TriggerResult:
 class TriggerEvaluator:
     """Evaluates telemetry against ATC trigger conditions."""
 
-    def __init__(self, nav: NavDatabase, llm: LLMService, tts: TTSService, atc: ATCSession):
+    def __init__(self, nav: NavDatabase):
         self.nav = nav
-        self.llm = llm
-        self.tts = tts
-        self.atc = atc
         self.cooldown = 15.0  # seconds between pushes
 
     def check_emergency(self, state: CallsignState) -> TriggerResult:
@@ -115,7 +107,6 @@ class TriggerEvaluator:
         if not dest:
             return TriggerResult(False)
 
-        from src.services.nav import _haversine
         d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
 
         if d <= 40 and tel.altitude_ft <= 20000:
@@ -138,7 +129,6 @@ class TriggerEvaluator:
         if not dest:
             return TriggerResult(False)
 
-        from src.services.nav import _haversine
         d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
 
         if d <= 10 and tel.altitude_ft <= 5000:
@@ -164,7 +154,6 @@ class TriggerEvaluator:
         if not dest:
             return TriggerResult(False)
 
-        from src.services.nav import _haversine
         d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
 
         if d <= 5:

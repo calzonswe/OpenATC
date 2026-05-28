@@ -1,13 +1,14 @@
 """ATC exchange orchestrator — ties STT + LLM + TTS + telemetry together."""
 
 import logging
+import time
 from typing import Optional
 
 from src.models.state import CallsignState, ExchangeEntry
 from src.services.stt import STTService
 from src.services.llm import LLMService
 from src.services.tts import TTSService
-from src.services.nav import NavDatabase
+from src.services.nav import NavDatabase, _haversine
 
 logger = logging.getLogger("openatc.session")
 
@@ -69,7 +70,6 @@ class ATCSession:
             if tel.dest_icao:
                 dest = self.nav.get_airport(tel.dest_icao)
                 if dest:
-                    from src.services.nav import _haversine
                     d = _haversine(
                         tel.latitude, tel.longitude,
                         dest.latitude, dest.longitude
@@ -80,7 +80,6 @@ class ATCSession:
             if tel.origin_icao:
                 origin = self.nav.get_airport(tel.origin_icao)
                 if origin:
-                    from src.services.nav import _haversine
                     d = _haversine(
                         tel.latitude, tel.longitude,
                         origin.latitude, origin.longitude
@@ -184,13 +183,13 @@ class ATCSession:
     async def process_audio(
         self,
         state: CallsignState,
-        audio_bytes: bytes,
+        audio_frames: list[bytes],
     ) -> tuple[str, str]:
         """Process audio transmission through STT + LLM + TTS.
 
         Args:
             state: Current callsign state
-            audio_bytes: Opus-encoded audio data from client
+            audio_frames: List of raw Opus frame bytes from client
 
         Returns:
             Tuple of (transcription, atc_response)
@@ -200,7 +199,7 @@ class ATCSession:
 
         # STT
         logger.info(f"Transcribing audio for {state.callsign}...")
-        transcription = self.stt.transcribe(audio_bytes)
+        transcription = self.stt.transcribe(audio_frames)
         logger.info(f"Transcription ({state.callsign}): {transcription}")
 
         # LLM
@@ -212,16 +211,17 @@ class ATCSession:
         logger.info(f"ATC response ({state.callsign}): {atc_response}")
 
         # Store exchange
+        now = time.time()
         state.add_exchange(ExchangeEntry(
             role=role,
             text=transcription,
-            timestamp=__import__("time").time(),
+            timestamp=now,
             is_push=False,
         ))
         state.add_exchange(ExchangeEntry(
             role=role,
             text=atc_response,
-            timestamp=__import__("time").time(),
+            timestamp=now,
             is_push=True,
         ))
 

@@ -189,15 +189,32 @@ Full protocol spec: [`docs/protocol.md`](docs/protocol.md)
 [server]
 host = "0.0.0.0"
 port = 8765
+log_level = "info"
 
 [models]
 stt_model = "base"          # tiny, base, small, medium, large
+stt_language = "en"         # or "de", "fr", "es", "it"
 llm_model = "qwen2.5:7b"
 llm_host = "http://ollama:11434"
+tts_sample_rate = 22050
+
+[voices]
+directory = "voices"
+auto_download = true
+role_map = [
+    { role = "delivery", voice = "delivery" },
+    { role = "ground", voice = "ground" },
+    { role = "tower", voice = "tower" },
+    { role = "departure", voice = "departure" },
+    { role = "center", voice = "center" },
+    { role = "approach", voice = "approach" },
+]
 
 [atc]
+telemetry_interval = 3.0
 trigger_cooldown = 15.0     # seconds between pushes
 history_window = 15         # exchanges kept for LLM context
+transition_alt_default = 6000
 ```
 
 Override via environment variables:
@@ -207,6 +224,9 @@ Override via environment variables:
 | `LLM_HOST` | `models.llm_host` |
 | `LLM_MODEL` | `models.llm_model` |
 | `SERVER_PORT` | `server.port` |
+| `SERVER_HOST` | `server.host` |
+| `STT_MODEL` | `models.stt_model` |
+| `SERVER_LOG_LEVEL` | uvicorn log level (`info`, `debug`, `warning`, `error`) |
 
 ### Client (`settings.json`)
 

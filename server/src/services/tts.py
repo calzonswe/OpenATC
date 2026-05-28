@@ -1,5 +1,6 @@
 """Text-to-Speech service using Piper TTS."""
 
+import asyncio
 import logging
 import subprocess
 import tempfile
@@ -48,22 +49,10 @@ class TTSService:
             self._discover_voices()
         return list(self._voice_models.keys())
 
-    def synthesize(self, text: str, role: str = "center") -> Optional[bytes]:
-        """Synthesize text to PCM audio using Piper.
-
-        Args:
-            text: Text to speak
-            role: ATC role voice to use (tower, center, approach, etc.)
-
-        Returns:
-            Raw PCM 16-bit mono audio bytes, or None on failure
-        """
-        if not self._voice_models:
-            self._discover_voices()
-
+    def _synthesize_sync(self, text: str, role: str) -> Optional[bytes]:
+        """Synchronous Piper TTS call (used internally by async wrapper)."""
         model_path = self._voice_models.get(role)
         if model_path is None:
-            # Fall back to any available voice
             if self._voice_models:
                 model_path = next(iter(self._voice_models.values()))
                 logger.warning(f"No voice for role '{role}', using {model_path.name}")
@@ -72,9 +61,7 @@ class TTSService:
                 return None
 
         json_path = model_path.with_suffix(".json")
-
         try:
-            # Run piper-tts as a subprocess
             result = subprocess.run(
                 [
                     "piper",
@@ -87,18 +74,12 @@ class TTSService:
                 capture_output=True,
                 timeout=30,
             )
-
             if result.returncode != 0:
                 logger.error(f"Piper TTS failed (role={role}): {result.stderr.decode()}")
                 return None
-
             return result.stdout
-
         except FileNotFoundError:
-            logger.error(
-                "Piper TTS not found in PATH. "
-                "Install from https://github.com/rhasspy/piper"
-            )
+            logger.error("Piper TTS not found in PATH. Install from https://github.com/rhasspy/piper")
             return None
         except subprocess.TimeoutExpired:
             logger.error(f"Piper TTS timed out (role={role})")
@@ -107,13 +88,31 @@ class TTSService:
             logger.error(f"Piper TTS error (role={role}): {e}")
             return None
 
-    def synthesize_to_wav(self, text: str, role: str = "center") -> Optional[bytes]:
+    async def synthesize(self, text: str, role: str = "center") -> Optional[bytes]:
+        """Synthesize text to PCM audio using Piper (non-blocking).
+
+        Runs the Piper subprocess in a thread executor to avoid blocking
+        the asyncio event loop.
+
+        Args:
+            text: Text to speak
+            role: ATC role voice to use (tower, center, approach, etc.)
+
+        Returns:
+            Raw PCM 16-bit mono audio bytes, or None on failure
+        """
+        if not self._voice_models:
+            self._discover_voices()
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._synthesize_sync, text, role)
+
+    async def synthesize_to_wav(self, text: str, role: str = "center") -> Optional[bytes]:
         """Synthesize text to WAV bytes (with header)."""
-        raw = self.synthesize(text, role)
+        raw = await self.synthesize(text, role)
         if raw is None:
             return None
 
-        import struct
         import wave
         import io
 

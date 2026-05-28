@@ -24,31 +24,9 @@ class FakeNav:
         return None
 
 
-class FakeLLM:
-    async def generate_sync(self, system_prompt, messages, temperature=0.2):
-        return "DAL123, maintain current altitude."
-
-
-class FakeTTS:
-    def synthesize(self, text, role="center"):
-        return b"\x00\x01\x02\x03"  # fake PCM
-    def get_available_roles(self):
-        return ["center"]
-
-
-class FakeATC:
-    def build_system_prompt(self, state, role):
-        return "system prompt"
-
-
 @pytest.fixture
 def evaluator():
-    return TriggerEvaluator(
-        nav=FakeNav(),
-        llm=FakeLLM(),
-        tts=FakeTTS(),
-        atc=FakeATC(),
-    )
+    return TriggerEvaluator(nav=FakeNav())
 
 
 def make_state(

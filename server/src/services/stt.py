@@ -1,11 +1,95 @@
 """Speech-to-Text service using faster-whisper."""
 
 import logging
+import struct
 import subprocess
 import tempfile
+import zlib
 from typing import Optional
 
 logger = logging.getLogger("openatc.stt")
+
+
+def _raw_opus_to_ogg(frames: list[bytes], sample_rate: int = 16000) -> bytes:
+    """Wrap raw Opus frames into a valid Ogg Opus container.
+
+    Accepts individual Opus packets (as sent by the client) and produces
+    a complete Ogg bitstream that ffmpeg can decode.
+
+    Args:
+        frames: List of raw Opus packet bytes (60ms each).
+        sample_rate: Input sample rate (used for OpusHead header only).
+
+    Returns:
+        Complete Ogg Opus byte stream.
+    """
+    serial = 0x4F504E  # "OPN" — arbitrary serial
+    FRAME_SAMPLES = 2880  # 60 ms at 48 kHz (Opus internal rate)
+
+    def _ogg_crc32(data: bytes) -> int:
+        crc = 0
+        for byte in data:
+            crc ^= byte
+            for _ in range(8):
+                if crc & 1:
+                    crc = (crc >> 1) ^ 0xEDB88320
+                else:
+                    crc >>= 1
+        return crc
+
+    def _page(packets: list[bytes], header_type: int,
+              granule: int, seq: int) -> bytes:
+        body = b"".join(packets)
+        seg_table = bytearray()
+        for p in packets:
+            remaining = len(p)
+            while remaining > 255:
+                seg_table.append(255)
+                remaining -= 255
+            seg_table.append(remaining)
+
+        hdr = b"OggS"                     # 0-3: capture
+        hdr += struct.pack("B", 0)        # 4: version
+        hdr += struct.pack("B", header_type)  # 5: header type
+        hdr += struct.pack("<q", granule) # 6-13: granule position
+        hdr += struct.pack("<I", serial)  # 14-17: serial
+        hdr += struct.pack("<I", seq)     # 18-21: page seq
+        hdr += struct.pack("<I", 0)       # 22-25: CRC (placeholder)
+        hdr += struct.pack("B", len(seg_table))  # 26: segments
+        hdr += bytes(seg_table)
+
+        crc = _ogg_crc32(hdr + body)
+        hdr = hdr[:22] + struct.pack("<I", crc) + hdr[26:]
+        return hdr + body
+
+    out = bytearray()
+
+    # Page 0: OpusHead (ID header)
+    id_packet = b"OpusHead"
+    id_packet += struct.pack("B", 1)          # version
+    id_packet += struct.pack("B", 1)          # output channel count
+    id_packet += struct.pack("<H", 0)         # pre-skip (0 for streaming)
+    id_packet += struct.pack("<I", sample_rate)  # input sample rate
+    id_packet += struct.pack("<h", 0)         # output gain
+    id_packet += struct.pack("B", 0)          # channel mapping family
+    out.extend(_page([bytes(id_packet)], 0x02, 0, 0))
+
+    # Page 1: OpusTags (comment header)
+    vendor = "OpenATC"
+    comment_pkt = b"OpusTags"
+    comment_pkt += struct.pack("<I", len(vendor))
+    comment_pkt += vendor.encode()
+    comment_pkt += struct.pack("<I", 0)      # user comment count
+    out.extend(_page([bytes(comment_pkt)], 0x00, 0, 1))
+
+    # Audio pages
+    granule = 0
+    for i, frame in enumerate(frames):
+        granule += FRAME_SAMPLES
+        hdr_type = 0x04 if i == len(frames) - 1 else 0x00
+        out.extend(_page([frame], hdr_type, granule, i + 2))
+
+    return bytes(out)
 
 
 class STTService:
@@ -38,7 +122,10 @@ class STTService:
             raise
 
     def _decode_opus_to_pcm(self, opus_data: bytes) -> bytes:
-        """Decode Opus bytes to raw PCM 16-bit mono 16kHz using ffmpeg."""
+        """Decode Opus bytes to raw PCM 16-bit mono 16kHz using ffmpeg.
+
+        Handles both Ogg-wrapped Opus and raw Opus packets (from client).
+        """
         with tempfile.NamedTemporaryFile(suffix=".opus") as tmp:
             tmp.write(opus_data)
             tmp.flush()
@@ -52,41 +139,67 @@ class STTService:
                     timeout=30,
                 )
                 if result.returncode != 0:
-                    logger.error(f"ffmpeg Opus decode failed: {result.stderr.decode()}")
-                    return opus_data  # fallback — may produce garbage
+                    logger.error(f"ffmpeg decode failed: {result.stderr.decode()}")
+                    return b""
                 return result.stdout
             except FileNotFoundError:
-                logger.warning("ffmpeg not found, passing raw Opus to Whisper")
-                return opus_data
+                logger.warning("ffmpeg not found, cannot decode Opus audio")
+                return b""
 
-    def transcribe(self, audio_bytes: bytes, sample_rate: int = 16000) -> str:
+    @staticmethod
+    def _is_opus_data(data: bytes) -> bool:
+        """Heuristic: check if data looks like raw Opus packets.
+
+        Raw Opus packets start with a TOC byte where the top 3 bits
+        (code) are 0-3 for various frame types. We check the first byte.
+        """
+        if not data:
+            return False
+        toc = data[0]
+        config = toc >> 3
+        # Valid Opus packet config values: 0..15 (mono) or 16..31 (stereo)
+        return config <= 31
+
+    def transcribe(self, audio: bytes | list[bytes], sample_rate: int = 16000) -> str:
         """Transcribe audio to text.
 
-        Accepts Opus-encoded bytes (from client) or raw PCM 16-bit mono.
-        If input is Opus, decodes via ffmpeg first.
+        Accepts raw Opus packets (as a list of frame bytes from the client),
+        Ogg-wrapped Opus, or raw PCM 16-bit mono. Opus is decoded via ffmpeg.
 
         Args:
-            audio_bytes: Opus or raw PCM 16-bit mono audio data
-            sample_rate: Expected sample rate of the audio (default 16000)
+            audio: Raw PCM 16-bit mono bytes, or a list of raw Opus frame bytes.
+            sample_rate: Expected sample rate of PCM audio (default 16000).
 
         Returns:
-            Transcribed text string
+            Transcribed text string.
         """
         self._load_model()
-
         import numpy as np
 
-        # Try to detect Opus header and decode
-        if len(audio_bytes) > 3 and audio_bytes[:3] == b"Ogg":
-            pcm = self._decode_opus_to_pcm(audio_bytes)
+        if isinstance(audio, list):
+            if not audio:
+                return ""
+            if self._is_opus_data(audio[0]):
+                ogg_data = _raw_opus_to_ogg(audio)
+                pcm = self._decode_opus_to_pcm(ogg_data)
+            else:
+                pcm = b"".join(audio)
+        elif len(audio) > 3 and audio[:3] == b"Ogg":
+            pcm = self._decode_opus_to_pcm(audio)
+        elif self._is_opus_data(audio):
+            ogg_data = _raw_opus_to_ogg([audio])
+            pcm = self._decode_opus_to_pcm(ogg_data)
         else:
-            pcm = audio_bytes
+            pcm = audio
 
-        # Convert bytes to float32 array (faster-whisper expects [-1, 1] float32)
+        if not pcm:
+            logger.warning("No PCM data to transcribe")
+            return ""
+
         audio_int16 = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
         audio_float32 = audio_int16 / 32768.0
 
-        segments, info = self._model.transcribe(
+        segments, _ = self._model.transcribe(
             audio_float32,
             language=self.language,
             vad_filter=True,

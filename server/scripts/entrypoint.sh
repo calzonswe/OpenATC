@@ -44,5 +44,6 @@ else
 fi
 
 # Step 4: Start the server
-echo "[4/4] Starting OpenATC Server..."
-exec uvicorn src.main:app --host 0.0.0.0 --port 8765
+LOG_LEVEL="${SERVER_LOG_LEVEL:-info}"
+echo "[4/4] Starting OpenATC Server (log_level=$LOG_LEVEL)..."
+exec uvicorn src.main:app --host 0.0.0.0 --port 8765 --log-level "$LOG_LEVEL"

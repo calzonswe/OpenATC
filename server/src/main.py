@@ -7,7 +7,6 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from src.config import Settings
 from src.store.connection_store import ConnectionStore
-from src.store.history_store import HistoryStore
 from src.models.protocol import MessageType, ClientMessage, ServerMessage
 from src.models.telemetry import Telemetry
 from src.models.state import ExchangeEntry
@@ -18,13 +17,11 @@ from src.services.nav import NavDatabase
 from src.services.atc_session import ATCSession
 from src.services.triggers import TriggerEvaluator, TriggerResult
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openatc")
 
 settings = Settings.from_toml()
 app = FastAPI(title="OpenATC Server", version="0.1.0")
 connection_store = ConnectionStore()
-history_store = HistoryStore(max_window=settings.atc__history_window)
 
 # Lazy-init services
 nav: Optional[NavDatabase] = None
@@ -33,6 +30,7 @@ llm: Optional[LLMService] = None
 tts: Optional[TTSService] = None
 atc_session: Optional[ATCSession] = None
 trigger_evaluator: Optional[TriggerEvaluator] = None
+_trigger_task: Optional[asyncio.Task] = None
 
 
 def _init_services():
@@ -57,13 +55,39 @@ def _init_services():
         sample_rate=settings.models__tts_sample_rate,
     )
     atc_session = ATCSession(stt=stt, llm=llm, tts=tts, nav=nav)
-    trigger_evaluator = TriggerEvaluator(nav=nav, llm=llm, tts=tts, atc=atc_session)
+    trigger_evaluator = TriggerEvaluator(nav=nav)
     logger.info("All services initialized")
 
 
 @app.on_event("startup")
 async def startup():
     _init_services()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    logger.info("Shutting down OpenATC server...")
+    # Cancel background tasks
+    global _trigger_task
+    if _trigger_task and not _trigger_task.done():
+        _trigger_task.cancel()
+        try:
+            await _trigger_task
+        except asyncio.CancelledError:
+            pass
+    # Unload ML models to free VRAM
+    if stt:
+        stt.unload()
+    # Close all WebSocket connections
+    for callsign in connection_store.all_callsigns():
+        ws = connection_store.get_ws(callsign)
+        if ws:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+        connection_store.unregister(callsign)
+    logger.info("Shutdown complete")
 
 
 @app.get("/health")
@@ -81,8 +105,8 @@ async def process_audio_for_callsign(callsign: str):
     if not state or not state.audio_buffer:
         return
 
-    # Concatenate all Opus frames into one buffer
-    audio_data = b"".join(state.audio_buffer)
+    # Pass individual Opus frames (STT handles Ogg wrapping internally)
+    audio_frames = list(state.audio_buffer)
     state.audio_buffer.clear()
 
     ws = connection_store.get_ws(callsign)
@@ -97,7 +121,7 @@ async def process_audio_for_callsign(callsign: str):
             text="...",
         ).model_dump_json())
 
-        transcription, atc_response = await atc_session.process_audio(state, audio_data)
+        transcription, atc_response = await atc_session.process_audio(state, audio_frames)
 
         # Send the ATC text response
         await ws.send_text(ServerMessage(
@@ -108,7 +132,7 @@ async def process_audio_for_callsign(callsign: str):
 
         # Synthesize and send TTS audio
         role = atc_session.determine_role(state)
-        audio_pcm = tts.synthesize(atc_response, role=role)
+        audio_pcm = await tts.synthesize(atc_response, role=role)
         if audio_pcm:
             await ws.send_text(ServerMessage(
                 type=MessageType.ATC_AUDIO_START,
@@ -136,7 +160,11 @@ async def process_audio_for_callsign(callsign: str):
 async def trigger_loop():
     """Background task: evaluate triggers for all connected aircraft."""
     while True:
-        await asyncio.sleep(5)
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            logger.info("Trigger loop cancelled")
+            return
         if not trigger_evaluator:
             continue
 
@@ -179,7 +207,7 @@ async def trigger_loop():
                 ).model_dump_json())
 
                 # Synthesize TTS for push
-                audio_pcm = tts.synthesize(response, role=result.role)
+                audio_pcm = await tts.synthesize(response, role=result.role)
                 if audio_pcm:
                     await ws.send_text(ServerMessage(
                         type=MessageType.ATC_AUDIO_START,
@@ -206,7 +234,8 @@ async def trigger_loop():
 
 @app.on_event("startup")
 async def start_trigger_loop():
-    asyncio.create_task(trigger_loop())
+    global _trigger_task
+    _trigger_task = asyncio.create_task(trigger_loop())
 
 
 @app.websocket("/ws")
@@ -230,7 +259,16 @@ async def websocket_endpoint(ws: WebSocket):
                     if msg.type == MessageType.REGISTER:
                         callsign = msg.callsign or "UNKNOWN"
                         conn_id = id(ws)
-                        connection_store.register(conn_id, ws, callsign)
+                        if not connection_store.register(conn_id, ws, callsign):
+                            logger.warning(f"Duplicate registration attempt: {callsign}")
+                            await ws.send_text(
+                                ServerMessage(
+                                    type=MessageType.ERROR,
+                                    callsign=callsign,
+                                    text=f"Callsign '{callsign}' already connected",
+                                ).model_dump_json()
+                            )
+                            continue
                         await ws.send_text(
                             ServerMessage(
                                 type=MessageType.REGISTERED,
