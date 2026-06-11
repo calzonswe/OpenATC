@@ -13,8 +13,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.FlightSimulator.SimConnect" Version="10.0.61251.0" />
     <PackageReference Include="NAudio" Version="2.3.0" />
-    <PackageReference Include="Concentus.Opus" Version="1.0.2" />
-    <PackageReference Include="SharpDX.DirectInput" Version="4.2.0" />
+    <PackageReference Include="Concentus" Version="2.2.2" />
+    <PackageReference Include="Vortice.DirectInput" Version="3.0.3" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.12" />
   </ItemGroup>
 

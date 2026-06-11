@@ -1,10 +1,12 @@
 """Tests for ATC trigger evaluator."""
 
-import pytest
 import time
+
+import pytest
+
 from src.models.state import CallsignState, ExchangeEntry
 from src.models.telemetry import Telemetry
-from src.services.triggers import TriggerEvaluator, TriggerResult
+from src.services.triggers import TriggerEvaluator
 
 
 class FakeNav:

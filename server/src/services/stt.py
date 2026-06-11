@@ -5,7 +5,7 @@ import struct
 import subprocess
 import tempfile
 import zlib
-from typing import Optional, Union
+from typing import Union
 
 logger = logging.getLogger("openatc.stt")
 
@@ -24,18 +24,7 @@ def _raw_opus_to_ogg(frames: list[bytes], sample_rate: int = 16000) -> bytes:
         Complete Ogg Opus byte stream.
     """
     serial = 0x4F504E  # "OPN" — arbitrary serial
-    FRAME_SAMPLES = 2880  # 60 ms at 48 kHz (Opus internal rate)
-
-    def _ogg_crc32(data: bytes) -> int:
-        crc = 0
-        for byte in data:
-            crc ^= byte
-            for _ in range(8):
-                if crc & 1:
-                    crc = (crc >> 1) ^ 0xEDB88320
-                else:
-                    crc >>= 1
-        return crc
+    frame_samples = 2880  # 60 ms at 48 kHz (Opus internal rate)
 
     def _page(packets: list[bytes], header_type: int,
               granule: int, seq: int) -> bytes:
@@ -48,17 +37,17 @@ def _raw_opus_to_ogg(frames: list[bytes], sample_rate: int = 16000) -> bytes:
                 remaining -= 255
             seg_table.append(remaining)
 
-        hdr = b"OggS"                     # 0-3: capture
-        hdr += struct.pack("B", 0)        # 4: version
-        hdr += struct.pack("B", header_type)  # 5: header type
-        hdr += struct.pack("<q", granule) # 6-13: granule position
-        hdr += struct.pack("<I", serial)  # 14-17: serial
-        hdr += struct.pack("<I", seq)     # 18-21: page seq
-        hdr += struct.pack("<I", 0)       # 22-25: CRC (placeholder)
-        hdr += struct.pack("B", len(seg_table))  # 26: segments
+        hdr = b"OggS"
+        hdr += struct.pack("B", 0)
+        hdr += struct.pack("B", header_type)
+        hdr += struct.pack("<q", granule)
+        hdr += struct.pack("<I", serial)
+        hdr += struct.pack("<I", seq)
+        hdr += struct.pack("<I", 0)
+        hdr += struct.pack("B", len(seg_table))
         hdr += bytes(seg_table)
 
-        crc = _ogg_crc32(hdr + body)
+        crc = zlib.crc32(hdr + body) & 0xFFFFFFFF
         hdr = hdr[:22] + struct.pack("<I", crc) + hdr[26:]
         return hdr + body
 
@@ -85,7 +74,7 @@ def _raw_opus_to_ogg(frames: list[bytes], sample_rate: int = 16000) -> bytes:
     # Audio pages
     granule = 0
     for i, frame in enumerate(frames):
-        granule += FRAME_SAMPLES
+        granule += frame_samples
         hdr_type = 0x04 if i == len(frames) - 1 else 0x00
         out.extend(_page([frame], hdr_type, granule, i + 2))
 

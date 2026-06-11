@@ -1,4 +1,6 @@
+using System;
 using System.Windows;
+using System.Windows.Input;
 using NAudio.Wave;
 using OpenATC.Client.Models;
 using OpenATC.Client.Services;
@@ -45,18 +47,30 @@ public partial class SettingsWindow : Window
             JoystickCombo.SelectedItem = _settings.JoystickDevice;
         }
 
-        // PTT key binding via keyboard preview
+        // PTT key binding — only accept modifier and function keys
         PttKeyBox.PreviewKeyDown += (s, e) =>
         {
-            PttKeyBox.Text = e.Key.ToString();
-            e.Handled = true;
+            var key = e.Key;
+            if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+                or Key.LeftShift or Key.RightShift or Key.CapsLock
+                or Key.Tab or Key.Escape or key >= Key.F1 && key <= Key.F24)
+            {
+                PttKeyBox.Text = e.Key.ToString();
+                e.Handled = true;
+            }
         };
     }
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
         _settings.ServerAddress = ServerAddressBox.Text;
-        _settings.ServerPort = int.TryParse(ServerPortBox.Text, out var port) ? port : 8765;
+        var port = 8765;
+        if (!int.TryParse(ServerPortBox.Text, out port) || port < 1 || port > 65535)
+        {
+            MessageBox.Show("Port must be a number between 1 and 65535.", "Invalid Port", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        _settings.ServerPort = port;
         _settings.Callsign = CallsignBox.Text.ToUpper();
         _settings.PttKey = PttKeyBox.Text;
         _settings.AudioInputDevice = AudioDeviceCombo.SelectedIndex >= 0

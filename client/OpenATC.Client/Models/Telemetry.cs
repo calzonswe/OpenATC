@@ -39,4 +39,7 @@ public class Telemetry
 
     [JsonPropertyName("flight_rules")]
     public string? FlightRules { get; set; }
+
+    [JsonPropertyName("timestamp")]
+    public double Timestamp { get; set; }
 }

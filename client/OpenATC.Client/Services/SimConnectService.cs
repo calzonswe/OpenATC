@@ -28,6 +28,7 @@ public class SimConnectService : IDisposable
             _simConnect = new SimConnect("OpenATC", IntPtr.Zero, 0x0409, null, 0);
             _simConnect.OnRecvOpen += OnSimConnectOpen;
             _simConnect.OnRecvQuit += OnSimConnectQuit;
+            _simConnect.OnRecvSimobjectData += OnSimDataReceived;
             IsConnected = true;
             ConnectionStatusChanged?.Invoke("Connected");
 
@@ -42,7 +43,6 @@ public class SimConnectService : IDisposable
 
     private void OnSimConnectOpen(SimConnect sender, SIMCONNECT_RECV_OPEN data)
     {
-        // Register data definitions for telemetry
         _simConnect?.AddToDataDefinition(
             DEFINITIONS.Telemetry,
             "PLANE LATITUDE", "degrees",
@@ -77,6 +77,28 @@ public class SimConnectService : IDisposable
             SIMCONNECT_DATATYPE.INT32);
 
         _simConnect?.RegisterDataDefineStruct<SimData>(DEFINITIONS.Telemetry);
+    }
+
+    private void OnSimDataReceived(SimConnect sender, SIMCONNECT_RECV_SIMOBJECT_DATA data)
+    {
+        if (data.dwRequestID != (uint)DATA_REQUESTS.Telemetry) return;
+        if (data.dwData.Length == 0) return;
+
+        var simData = (SimData)data.dwData[0];
+        var telemetry = new Telemetry
+        {
+            Callsign = "",
+            Latitude = simData.Latitude,
+            Longitude = simData.Longitude,
+            AltitudeFt = simData.AltitudeFt,
+            Heading = simData.Heading,
+            SpeedKts = simData.SpeedKts,
+            VerticalSpeedFpm = simData.VerticalSpeedFpm,
+            OnGround = simData.OnGround != 0,
+            TransponderCode = simData.TransponderCode,
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        };
+        TelemetryUpdated?.Invoke(telemetry);
     }
 
     private void StartTelemetryTimer()

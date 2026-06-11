@@ -93,7 +93,7 @@ class TriggerEvaluator:
                     return TriggerResult(False)
             return TriggerResult(
                 True,
-                f"Aircraft climbed through FL100, handoff to departure",
+                "Aircraft climbed through FL100, handoff to departure",
                 "departure",
             )
         return TriggerResult(False)

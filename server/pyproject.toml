@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "openatc-server"
+version = "0.2.0"
+description = "OpenATC — AI-powered Air Traffic Control for flight simulators"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/services/stt.py" = ["F401"]
+"src/services/llm.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"

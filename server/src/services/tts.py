@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -113,8 +112,8 @@ class TTSService:
         if raw is None:
             return None
 
-        import wave
         import io
+        import wave
 
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:

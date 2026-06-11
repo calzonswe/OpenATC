@@ -1,7 +1,9 @@
 from typing import Optional
+
 from fastapi import WebSocket
-from src.models.telemetry import Telemetry
+
 from src.models.state import CallsignState
+from src.models.telemetry import Telemetry
 
 
 class ConnectionInfo:

@@ -2,11 +2,11 @@
 
 WebSocket integration tests use pytest-asyncio with a live test server.
 """
-import pytest
 import json
-from src.models.protocol import MessageType, ClientMessage, ServerMessage
-from src.models.telemetry import Telemetry
+
+from src.models.protocol import ClientMessage, MessageType, ServerMessage
 from src.models.state import CallsignState, ExchangeEntry
+from src.models.telemetry import Telemetry
 from src.store.connection_store import ConnectionStore
 
 

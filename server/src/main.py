@@ -5,23 +5,49 @@ import time
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
 from src.config import Settings
-from src.store.connection_store import ConnectionStore
-from src.models.protocol import MessageType, ClientMessage, ServerMessage
-from src.models.telemetry import Telemetry
+from src.models.protocol import ClientMessage, MessageType, ServerMessage
 from src.models.state import ExchangeEntry
-from src.services.stt import STTService
-from src.services.llm import LLMService
-from src.services.tts import TTSService
-from src.services.nav import NavDatabase
+from src.models.telemetry import Telemetry
 from src.services.atc_session import ATCSession
-from src.services.triggers import TriggerEvaluator, TriggerResult
+from src.services.llm import LLMService
+from src.services.nav import NavDatabase
+from src.services.stt import STTService
+from src.services.triggers import TriggerEvaluator
+from src.services.tts import TTSService
+from src.store.connection_store import ConnectionStore
 
 logger = logging.getLogger("openatc")
 
+
+def _setup_logging():
+    level = getattr(logging, settings.server__log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    for lib in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(lib).setLevel(logging.WARNING)
+
+
 settings = Settings.from_toml()
-app = FastAPI(title="OpenATC Server", version="0.1.0")
+_setup_logging()
+app = FastAPI(title="OpenATC Server", version="0.2.0")
 connection_store = ConnectionStore()
+
+MAX_CONNECTIONS = 32
+_rate_limit: dict[str, float] = {}
+
+
+def _check_rate_limit(callsign: str, min_interval: float = 1.0) -> bool:
+    now = time.time()
+    last = _rate_limit.get(callsign, 0.0)
+    if now - last < min_interval:
+        return False
+    _rate_limit[callsign] = now
+    return True
 
 # Lazy-init services
 nav: Optional[NavDatabase] = None
@@ -62,12 +88,14 @@ def _init_services():
 @app.on_event("startup")
 async def startup():
     _init_services()
+    global _trigger_task
+    _trigger_task = asyncio.create_task(trigger_loop())
+    logger.info("Startup complete — services initialized, trigger loop started")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Shutting down OpenATC server...")
-    # Cancel background tasks
     global _trigger_task
     if _trigger_task and not _trigger_task.done():
         _trigger_task.cancel()
@@ -75,10 +103,8 @@ async def shutdown():
             await _trigger_task
         except asyncio.CancelledError:
             pass
-    # Unload ML models to free VRAM
     if stt:
         stt.unload()
-    # Close all WebSocket connections
     for callsign in connection_store.all_callsigns():
         ws = connection_store.get_ws(callsign)
         if ws:
@@ -114,23 +140,24 @@ async def process_audio_for_callsign(callsign: str):
         return
 
     try:
-        # Send "thinking" indicator
         await ws.send_text(ServerMessage(
             type=MessageType.ATC_TEXT,
             callsign=callsign,
             text="...",
         ).model_dump_json())
 
-        transcription, atc_response = await atc_session.process_audio(state, audio_frames)
+        timeout = 60.0
+        transcription, atc_response = await asyncio.wait_for(
+            atc_session.process_audio(state, audio_frames),
+            timeout=timeout,
+        )
 
-        # Send the ATC text response
         await ws.send_text(ServerMessage(
             type=MessageType.ATC_TEXT,
             callsign=callsign,
             text=atc_response,
         ).model_dump_json())
 
-        # Synthesize and send TTS audio
         role = atc_session.determine_role(state)
         audio_pcm = await tts.synthesize(atc_response, role=role)
         if audio_pcm:
@@ -138,7 +165,6 @@ async def process_audio_for_callsign(callsign: str):
                 type=MessageType.ATC_AUDIO_START,
                 callsign=callsign,
             ).model_dump_json())
-            # Send in chunks
             chunk_size = 4096
             for i in range(0, len(audio_pcm), chunk_size):
                 chunk = audio_pcm[i:i + chunk_size]
@@ -148,6 +174,13 @@ async def process_audio_for_callsign(callsign: str):
                 callsign=callsign,
             ).model_dump_json())
 
+    except asyncio.TimeoutError:
+        logger.error(f"Audio processing timed out for {callsign}")
+        await ws.send_text(ServerMessage(
+            type=MessageType.ERROR,
+            callsign=callsign,
+            text="Processing timed out — please try again",
+        ).model_dump_json())
     except Exception as e:
         logger.error(f"Audio processing failed for {callsign}: {e}")
         await ws.send_text(ServerMessage(
@@ -232,20 +265,27 @@ async def trigger_loop():
                 logger.error(f"Trigger push failed for {callsign}: {e}")
 
 
-@app.on_event("startup")
-async def start_trigger_loop():
-    global _trigger_task
-    _trigger_task = asyncio.create_task(trigger_loop())
-
-
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     callsign: Optional[str] = None
 
+    if connection_store.count() >= MAX_CONNECTIONS:
+        await ws.send_text(ServerMessage(
+            type=MessageType.ERROR,
+            text="Server full — max connections reached",
+        ).model_dump_json())
+        await ws.close()
+        return
+
     try:
         while True:
-            raw = await ws.receive()
+            try:
+                raw = await asyncio.wait_for(ws.receive(), timeout=60.0)
+            except asyncio.TimeoutError:
+                logger.info(f"Connection timeout for {callsign or 'unknown'}")
+                break
+
             event_type = raw.get("type", "")
 
             if event_type == "websocket.disconnect":
@@ -291,8 +331,15 @@ async def websocket_endpoint(ws: WebSocket):
                         state = connection_store.get_state(callsign)
                         if state:
                             state.is_recording = False
-                            # Process the audio async
-                            asyncio.create_task(process_audio_for_callsign(callsign))
+                            if _check_rate_limit(callsign, min_interval=2.0):
+                                asyncio.create_task(process_audio_for_callsign(callsign))
+                            else:
+                                logger.warning(f"Rate limited audio from {callsign}")
+                                await ws.send_text(ServerMessage(
+                                    type=MessageType.ERROR,
+                                    callsign=callsign,
+                                    text="Please wait before sending again",
+                                ).model_dump_json())
 
                     elif msg.type == MessageType.PONG:
                         pass

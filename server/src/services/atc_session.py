@@ -2,13 +2,12 @@
 
 import logging
 import time
-from typing import Optional
 
 from src.models.state import CallsignState, ExchangeEntry
-from src.services.stt import STTService
 from src.services.llm import LLMService
-from src.services.tts import TTSService
 from src.services.nav import NavDatabase, _haversine
+from src.services.stt import STTService
+from src.services.tts import TTSService
 
 logger = logging.getLogger("openatc.session")
 
@@ -49,8 +48,6 @@ class ATCSession:
 
         alt = tel.altitude_ft
         on_ground = tel.on_ground
-        callsign = tel.callsign
-
         if on_ground or alt < 500:
             # Find nearest airport for ground/tower/delivery
             apt = self.nav.nearest_airport(tel.latitude, tel.longitude, radius_nm=5)
@@ -102,7 +99,10 @@ class ATCSession:
 
         try:
             from pathlib import Path
-            proc_path = Path(__file__).parent.parent / "prompts" / "procedures" / f"{country.lower()}.md"
+            proc_path = (
+                Path(__file__).parent.parent
+                / "prompts" / "procedures" / f"{country.lower()}.md"
+            )
             if proc_path.exists():
                 return proc_path.read_text()
         except Exception:
@@ -176,7 +176,9 @@ class ATCSession:
         prompt_parts.append("  - Prioritize emergency aircraft above all others.")
         prompt_parts.append("")
 
-        prompt_parts.append("Respond only with the ATC message. Do not prefix or suffix with anything else.")
+        prompt_parts.append(
+            "Respond only with the ATC message. Do not prefix or suffix with anything else."
+        )
 
         return "\n".join(prompt_parts)
 

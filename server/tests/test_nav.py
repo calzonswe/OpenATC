@@ -1,6 +1,4 @@
-import pytest
 from src.services.nav import NavDatabase
-
 
 # Use the actual downloaded data
 nav = NavDatabase(data_dir="data")

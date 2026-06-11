@@ -1,9 +1,10 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import List, Dict, Optional
 import os
 import tomllib
 from pathlib import Path
+from typing import Dict, List
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class VoiceRoleConfig(BaseSettings):

@@ -10,7 +10,7 @@ Monorepo with two independent deployable components:
 ## Server commands (run from `server/`)
 
 ```bash
-# Install
+# Install (macOS: Python 3.12+ from python.org; set DYLD_FRAMEWORK_PATH if manually extracted)
 python3 -m venv venv && . venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper ollama  # optional ML deps, lazy-loaded at runtime
@@ -21,16 +21,20 @@ python scripts/download_voices.py
 # Run dev server
 uvicorn src.main:app --reload --port 8765
 
-# Test (all 33 tests)
+# Test (all 33+ tests)
 PYTHONPATH=. pytest tests/ -v
 
 # Single test file
 PYTHONPATH=. pytest tests/test_nav.py -v
 ```
 
+> **macOS note:** If Python 3.12+ was installed by extracting the .pkg manually (without sudo),
+> set `export DYLD_FRAMEWORK_PATH="$HOME/.local/lib/python-framework"` before running Python.
+> The `venv/bin/activate` script handles this automatically if the venv was created after setup.
+
 ## Key architecture facts
 
-- **Entrypoint:** `server/src/main.py:app` — FastAPI with two startup events (service init, trigger loop), one WebSocket endpoint at `/ws`, one health endpoint at `/health`.
+- **Entrypoint:** `server/src/main.py:app` — FastAPI with single startup event (service init + trigger loop), one WebSocket endpoint at `/ws`, one health endpoint at `/health`.
 - **Config:** `server/config.toml` loaded by `src/config.py:Settings.from_toml()`. Env vars override: `LLM_HOST`, `LLM_MODEL`, `SERVER_PORT`, `SERVER_HOST`, `STT_MODEL`.
 - **Services lazy-loaded** on startup in `_init_services()` (nav → stt → llm → tts → atc_session → trigger_evaluator). Each ML service loads its model on first call, not at init.
 - **WebSocket protocol:** JSON text frames for control messages, raw binary frames for audio. No base64. Audio flow: `audio_start` (text) → binary Opus frames → `audio_end` (text) triggers async `process_audio_for_callsign()` → `atc_text` + binary PCM TTS frames.

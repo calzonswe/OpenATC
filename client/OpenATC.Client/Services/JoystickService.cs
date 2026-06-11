@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using SharpDX.DirectInput;
+using Vortice.DirectInput;
 
 namespace OpenATC.Client.Services;
 
 public class JoystickService : IDisposable
 {
-    private DirectInput? _directInput;
+    private IDirectInput8? _directInput;
     private List<DeviceInstance>? _devices;
 
     public event Action<int>? ButtonPressed;
@@ -15,19 +15,13 @@ public class JoystickService : IDisposable
 
     public List<string> GetJoystickNames()
     {
-        _directInput ??= new DirectInput();
+        _directInput ??= DirectInput8.Create();
         _devices = _directInput.GetDevices(
                 DeviceClass.GameControl,
-                DeviceEnumFlags.AttachedOnly)
+                DeviceEnumerationFlags.AttachedOnly)
             .ToList();
 
         return _devices.Select(d => d.InstanceName).ToList();
-    }
-
-    public void StartPolling(Guid deviceGuid, int buttonIndex)
-    {
-        // Polling loop would run in a background thread
-        // and fire ButtonPressed/ButtonReleased events
     }
 
     public void Dispose()

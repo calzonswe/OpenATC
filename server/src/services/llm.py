@@ -1,8 +1,7 @@
 """LLM service — interfaces with Ollama for ATC response generation."""
 
-import json
 import logging
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 logger = logging.getLogger("openatc.llm")
 
