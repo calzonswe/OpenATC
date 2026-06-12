@@ -10,6 +10,7 @@ from src.config import Settings
 from src.models.protocol import ClientMessage, MessageType, ServerMessage
 from src.models.state import CallsignState, ExchangeEntry
 from src.models.telemetry import Telemetry
+from src.services.airline_db import AirlineDB
 from src.services.atc_session import ATCSession
 from src.services.llm import LLMService
 from src.services.nav import NavDatabase
@@ -52,6 +53,7 @@ def _check_rate_limit(callsign: str, min_interval: float = 1.0) -> bool:
 
 # Lazy-init services
 nav: Optional[NavDatabase] = None
+airline_db: Optional[AirlineDB] = None
 stt: Optional[STTService] = None
 llm: Optional[LLMService] = None
 tts: Optional[TTSService] = None
@@ -62,13 +64,14 @@ _TRIGGER_CONCURRENCY = 8
 
 
 def _init_services():
-    global nav, stt, llm, tts, atc_session, trigger_evaluator
+    global nav, airline_db, stt, llm, tts, atc_session, trigger_evaluator
     if nav is not None:
         return
 
     logger.info("Initializing services...")
     nav = NavDatabase(data_dir="data")
     logger.info(f"NavDB loaded: {len(nav.airports)} airports, {len(nav.runways)} runways")
+    airline_db = AirlineDB(data_dir="data")
 
     stt = STTService(
         model_name=settings.models__stt_model,
@@ -82,7 +85,7 @@ def _init_services():
         voices_dir=settings.voices__directory,
         sample_rate=settings.models__tts_sample_rate,
     )
-    atc_session = ATCSession(stt=stt, llm=llm, tts=tts, nav=nav)
+    atc_session = ATCSession(stt=stt, llm=llm, tts=tts, nav=nav, airline_db=airline_db)
     trigger_evaluator = TriggerEvaluator(nav=nav)
     logger.info("All services initialized")
 
@@ -209,9 +212,10 @@ async def _push_trigger(callsign: str, state: CallsignState, result) -> None:
     """Execute one trigger push: LLM + send + TTS."""
     try:
         system_prompt = atc_session.build_system_prompt(state, result.role)
+        resolved = airline_db.resolve(callsign) if airline_db else callsign
         prompt = (
             f"ATC Trigger: {result.reason}\n\n"
-            f"Generate an appropriate ATC instruction for {callsign}. "
+            f"Generate an appropriate ATC instruction for {resolved}. "
             f"Use correct ICAO phraseology."
         )
         messages = [{"role": "user", "content": prompt}]

@@ -1,15 +1,28 @@
 """ATC exchange orchestrator — ties STT + LLM + TTS + telemetry together."""
 
 import logging
+import re
 import time
+from typing import Optional
 
 from src.models.state import CallsignState, ExchangeEntry
+from src.services.airline_db import AirlineDB
 from src.services.llm import LLMService
 from src.services.nav import NavDatabase, _haversine
 from src.services.stt import STTService
 from src.services.tts import TTSService
 
 logger = logging.getLogger("openatc.session")
+
+_CALLSIGN_PARSE = re.compile(r"^([A-Za-z0-9]{2,3})(\d{1,4})$")
+
+
+def _format_callsign(callsign: str, airline_db: AirlineDB) -> str:
+    """Format a callsign for display in the prompt with telephony resolution."""
+    resolved = airline_db.resolve(callsign)
+    if resolved != callsign:
+        return f"{callsign} ({resolved})"
+    return callsign
 
 
 class ATCSession:
@@ -31,11 +44,13 @@ class ATCSession:
         llm: LLMService,
         tts: TTSService,
         nav: NavDatabase,
+        airline_db: AirlineDB,
     ):
         self.stt = stt
         self.llm = llm
         self.tts = tts
         self.nav = nav
+        self.airline_db = airline_db
 
     def determine_role(self, state: CallsignState) -> str:
         """Determine which ATC role should handle this transmission.
@@ -87,6 +102,15 @@ class ATCSession:
 
         return "center"
 
+    @staticmethod
+    def _nearest_atis_freq(nav: NavDatabase, tel) -> Optional[float]:
+        if tel is None:
+            return None
+        apt = nav.nearest_airport(tel.latitude, tel.longitude, radius_nm=50)
+        if not apt:
+            return None
+        return nav.get_frequency(apt.icao, "ATIS")
+
     def build_country_context(self, state: CallsignState) -> str:
         """Get country-specific phraseology from nearest airport."""
         tel = state.latest_telemetry
@@ -120,17 +144,22 @@ class ATCSession:
             "",
             "1. Use standard ICAO English phraseology at all times.",
             "2. Always address the aircraft by its full callsign on first contact.",
-            "3. Use 'FL' followed by three digits for altitudes above transition altitude.",
-            "4. Use 'feet' for altitudes below transition altitude.",
-            "5. Use 'left/right heading XXX' for heading instructions.",
-            "6. Use 'reduce/increase speed to XXX knots' for speed.",
-            "7. Use 'Contact [position] on XXX.XXX' for frequency changes.",
-            "8. Do NOT add any meta-commentary, explanations, or text outside the ATC message.",
-            "9. Do NOT ask questions — issue instructions.",
-            "10. Keep responses concise — one or two sentences maximum.",
-            "11. Never use casual language like 'okay', 'got it', 'sure', 'alright'.",
-            "12. Never say 'thank you' or 'please'.",
-            f"13. Your current role is: {role.upper()}",
+            "3. CALLSIGN FORMAT: callsigns consist of an airline code + flight number.",
+            '   Say the airline telephony name followed by individual digits.',
+            '   Example: "SK123" is spoken as "Scandinavian one two three",',
+            '   and "DAL456" is spoken as "Delta four five six".',
+            "   After first contact you may abbreviate (e.g., 'Speedbird one' after 'Speedbird one two three').",
+            "4. Use 'FL' followed by three digits for altitudes above transition altitude.",
+            "5. Use 'feet' for altitudes below transition altitude.",
+            "6. Use 'left/right heading XXX' for heading instructions.",
+            "7. Use 'reduce/increase speed to XXX knots' for speed.",
+            "8. Use 'Contact [position] on XXX.XXX' for frequency changes.",
+            "9. Do NOT add any meta-commentary, explanations, or text outside the ATC message.",
+            "10. Do NOT ask questions — issue instructions.",
+            "11. Keep responses concise — one or two sentences maximum.",
+            "12. Never use casual language like 'okay', 'got it', 'sure', 'alright'.",
+            "13. Never say 'thank you' or 'please'.",
+            f"14. Your current role is: {role.upper()}",
             "",
         ]
 
@@ -150,7 +179,7 @@ class ATCSession:
         # Add current aircraft state
         if tel:
             prompt_parts.append("CURRENT AIRCRAFT STATE:")
-            prompt_parts.append(f"  Callsign: {tel.callsign}")
+            prompt_parts.append(f"  Callsign: {_format_callsign(tel.callsign, self.airline_db)}")
             prompt_parts.append(f"  Position: {tel.latitude:.4f}, {tel.longitude:.4f}")
             prompt_parts.append(f"  Altitude: {tel.altitude_ft:.0f} ft")
             prompt_parts.append(f"  Heading: {tel.heading:.0f}°")
@@ -168,6 +197,26 @@ class ATCSession:
             if state.last_assigned_alt is not None:
                 prompt_parts.append(f"  Last Assigned Altitude: FL{state.last_assigned_alt // 100}")
             prompt_parts.append("")
+
+        # Nearby ATIS frequency
+        atis_freq = self._nearest_atis_freq(self.nav, tel)
+        if atis_freq:
+            prompt_parts.append(f"ATIS available on {atis_freq:.3f} MHz for the nearest airport.")
+
+        # ATIS handling
+        prompt_parts.append("ATIS (AUTOMATIC TERMINAL INFORMATION SERVICE):")
+        prompt_parts.append("  - If the pilot requests ATIS, information, or airport weather,")
+        prompt_parts.append("    generate a standard ATIS report.")
+        prompt_parts.append("  - ATIS format: [airport] information [letter], [time] Zulu,")
+        prompt_parts.append("    runway [number], wind [dir]/[speed], visibility [distance],")
+        prompt_parts.append("    weather [conditions], temperature [temp], dewpoint [dew],")
+        prompt_parts.append("    QNH [altimeter], advise pilot to advise on initial contact.")
+        prompt_parts.append("  - If no ATIS frequency is listed, instruct pilot to monitor")
+        prompt_parts.append("    the appropriate frequency for the information.")
+        prompt_parts.append("  - Use realistic but varied weather that matches the aircraft's")
+        prompt_parts.append("    location and season.")
+        prompt_parts.append("  - Issue a new information letter each time (A, B, C...).")
+        prompt_parts.append("")
 
         # Emergency detection
         prompt_parts.append("EMERGENCY HANDLING:")
