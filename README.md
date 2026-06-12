@@ -31,9 +31,11 @@ The server handles all intelligence. The client is a thin relay that sends audio
 - 🧠 **LLM-powered ATC** — qwen2.5:7b via Ollama understands context, altitude, heading, and flight phase
 - 🗣️ **6 distinct ATC voices** — Delivery, Ground, Tower, Departure, Center, Approach (Piper TTS)
 - 🌍 **European phraseology** — auto-adapts per country (DE, GB, FR, ES, IT) with correct QNH, transition altitudes, and callsign formats
+- 🏷️ **Airline callsign resolution** — "SK123" spoken as "Scandinavian 123", with 168 ICAO/IATA → telephony mappings
+- 📻 **ATIS on demand** — say "Request ATIS" via PTT, the AI generates a standard weather report for the nearest airport
 - 🚦 **Proactive ATC** — server pushes altitude corrections, handoffs, approach clearances, squawk codes, and emergency handling
 - 📡 **Real-time telemetry** — position, altitude, heading, speed, transponder — polled from SimConnect every 3 seconds
-- 🗺️ **Built-in nav database** — 85,000+ airports, 48,000 runways, COM frequencies from OurAirports
+- 🗺️ **Built-in nav database** — 72,000+ airports, 48,000 runways, 1,500+ ATIS frequencies from OurAirports
 - 🐳 **Docker Compose** — one-command server deployment
 
 ---
@@ -59,7 +61,7 @@ That's it. The first start downloads:
 Verify:
 ```bash
 curl http://localhost:8765/health
-# → {"status":"ok","connections":0,"nav_airports":85193}
+# → {"status":"ok","connections":0,"nav_airports":72239}
 ```
 
 #### Port configuration
@@ -123,18 +125,19 @@ Press and hold PTT to speak. Release to hear the ATC response.
 
 ```
 Client → Server:
-  • register     — callsign registration
-  • telemetry    — position/altitude/heading (every 3s)
-  • audio_start  — PTT pressed
-  • audio_frame  — Opus-encoded 16kHz PCM (binary)
-  • audio_end    — PTT released
+  • register     — text: callsign registration
+  • telemetry    — text: position/altitude/heading (every 3s)
+  • audio_start  — text: PTT pressed
+  • binary       — raw Opus-encoded 16kHz 16-bit mono frames
+  • audio_end    — text: PTT released
 
 Server → Client:
-  • registered   — confirmation
-  • atc_text     — LLM response (streamed tokens)
-  • atc_audio_*  — TTS playback (bracketed binary)
-  • push_instruction — unsolicited ATC (altitude correction, handoff, etc.)
-  • error        — processing failure
+  • registered   — text: registration confirmed
+  • atc_text     — text: transcription + LLM response
+  • atc_audio_*  — text: start/end markers bracketing raw PCM TTS binary
+  • binary       — raw PCM 22050Hz 16-bit mono audio (TTS output)
+  • push_instruction — text: unsolicited ATC (altitude correction, handoff, ATIS, etc.)
+  • error        — text: processing failure
 ```
 
 Full protocol spec: [`docs/protocol.md`](docs/protocol.md)
@@ -153,6 +156,20 @@ Full protocol spec: [`docs/protocol.md`](docs/protocol.md)
 | Departure | Initial climb after takeoff (up to FL100) |
 | Center | En-route (above FL100, between airports) |
 | Approach | Arrival sequencing (within 40 nm of destination, below FL200) |
+
+### Callsign handling
+
+The server resolves ICAO/IATA airline codes to their standard telephony names (168 mappings):
+- `SK123` → **Scandinavian 123**
+- `DAL456` → **Delta 456**
+- `BAW789` → **Speedbird 789**
+- Unknown callsigns are used as-is.
+
+Numbers are spoken as individual digits ("one two three", not "one hundred twenty-three").
+
+### ATIS on demand
+
+Say **"Request ATIS"**, **"Information"**, or **"Weather for [airport]"** via PTT. The LLM generates a standard ATIS report (information letter, time, runway, wind, visibility, weather, QNH) for the nearest airport with an ATIS frequency in the nav database.
 
 ### Server-initiated triggers (10 automatic conditions)
 
@@ -195,7 +212,7 @@ log_level = "info"
 stt_model = "base"          # tiny, base, small, medium, large
 stt_language = "en"         # or "de", "fr", "es", "it"
 llm_model = "qwen2.5:7b"
-llm_host = "http://ollama:11434"
+llm_host = "http://localhost:11434"   # Docker: use "http://ollama:11434"
 tts_sample_rate = 22050
 
 [voices]
@@ -267,8 +284,11 @@ pip install faster-whisper ollama
 python scripts/download_voices.py
 uvicorn src.main:app --reload --port 8765
 
-# Tests
-pytest tests/
+# Tests (run from server/)
+PYTHONPATH=. pytest tests/ -v
+
+# Lint
+ruff check src/ tests/
 ```
 
 ```bash
