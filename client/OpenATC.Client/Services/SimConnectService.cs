@@ -29,10 +29,6 @@ public class SimConnectService : IDisposable
             _simConnect.OnRecvOpen += OnSimConnectOpen;
             _simConnect.OnRecvQuit += OnSimConnectQuit;
             _simConnect.OnRecvSimobjectData += OnSimDataReceived;
-            IsConnected = true;
-            ConnectionStatusChanged?.Invoke("Connected");
-
-            StartTelemetryTimer();
         }
         catch (Exception ex)
         {
@@ -77,6 +73,10 @@ public class SimConnectService : IDisposable
             SIMCONNECT_DATATYPE.INT32);
 
         _simConnect?.RegisterDataDefineStruct<SimData>(DEFINITIONS.Telemetry);
+
+        IsConnected = true;
+        ConnectionStatusChanged?.Invoke("Connected");
+        StartTelemetryTimer();
     }
 
     private void OnSimDataReceived(SimConnect sender, SIMCONNECT_RECV_SIMOBJECT_DATA data)

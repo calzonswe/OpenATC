@@ -7,7 +7,7 @@ log_level = "info"
 stt_model = "base"          # tiny, base, small, medium, large
 stt_language = "en"         # or "de" for German, "fr" for French, etc.
 llm_model = "qwen2.5:7b"
-llm_host = "http://ollama:11434"
+llm_host = "http://localhost:11434"
 tts_sample_rate = 22050
 
 [voices]

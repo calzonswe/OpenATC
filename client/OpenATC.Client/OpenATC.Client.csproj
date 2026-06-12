@@ -7,7 +7,6 @@
     <Nullable>enable</Nullable>
     <AssemblyName>OpenATC.Client</AssemblyName>
     <RootNamespace>OpenATC.Client</RootNamespace>
-    <ApplicationIcon>Resources\icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,10 +15,6 @@
     <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="Vortice.DirectInput" Version="3.0.3" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.12" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Resource Include="Resources\**\*" />
   </ItemGroup>
 
 </Project>

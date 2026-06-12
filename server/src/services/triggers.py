@@ -81,6 +81,15 @@ class TriggerEvaluator:
             )
         return TriggerResult(False)
 
+    def _dest_distance(self, state: CallsignState) -> Optional[float]:
+        tel = state.latest_telemetry
+        if not tel or not tel.dest_icao:
+            return None
+        dest = self.nav.get_airport(tel.dest_icao)
+        if not dest:
+            return None
+        return _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+
     def check_departure_handoff(self, state: CallsignState) -> TriggerResult:
         """Handoff to departure when climbing through 10,000 ft."""
         tel = state.latest_telemetry
@@ -98,16 +107,18 @@ class TriggerEvaluator:
             )
         return TriggerResult(False)
 
-    def check_approach_handoff(self, state: CallsignState) -> TriggerResult:
+    def check_approach_handoff(self, state: CallsignState, dest_distance: Optional[float] = None) -> TriggerResult:
         """Handoff to approach when within 40nm descending."""
         tel = state.latest_telemetry
         if tel is None or not tel.dest_icao:
             return TriggerResult(False)
-        dest = self.nav.get_airport(tel.dest_icao)
-        if not dest:
-            return TriggerResult(False)
-
-        d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+        if dest_distance is None:
+            dest = self.nav.get_airport(tel.dest_icao)
+            if not dest:
+                return TriggerResult(False)
+            d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+        else:
+            d = dest_distance
 
         if d <= 40 and tel.altitude_ft <= 20000:
             for entry in reversed(state.history):
@@ -120,16 +131,18 @@ class TriggerEvaluator:
             )
         return TriggerResult(False)
 
-    def check_tower_handoff(self, state: CallsignState) -> TriggerResult:
+    def check_tower_handoff(self, state: CallsignState, dest_distance: Optional[float] = None) -> TriggerResult:
         """Handoff to tower when within 10nm below 5,000 ft."""
         tel = state.latest_telemetry
         if tel is None or not tel.dest_icao:
             return TriggerResult(False)
-        dest = self.nav.get_airport(tel.dest_icao)
-        if not dest:
-            return TriggerResult(False)
-
-        d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+        if dest_distance is None:
+            dest = self.nav.get_airport(tel.dest_icao)
+            if not dest:
+                return TriggerResult(False)
+            d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+        else:
+            d = dest_distance
 
         if d <= 10 and tel.altitude_ft <= 5000:
             for entry in reversed(state.history):
@@ -145,16 +158,18 @@ class TriggerEvaluator:
             )
         return TriggerResult(False)
 
-    def check_approach_clearance(self, state: CallsignState) -> TriggerResult:
+    def check_approach_clearance(self, state: CallsignState, dest_distance: Optional[float] = None) -> TriggerResult:
         """Clear for ILS approach when on final."""
         tel = state.latest_telemetry
-        if tel is None or not tel.dest_icao or tel.altitude_ft > 1000:
+        if tel is None or not tel.dest_icao or tel.altitude_ft > 3000:
             return TriggerResult(False)
-        dest = self.nav.get_airport(tel.dest_icao)
-        if not dest:
-            return TriggerResult(False)
-
-        d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+        if dest_distance is None:
+            dest = self.nav.get_airport(tel.dest_icao)
+            if not dest:
+                return TriggerResult(False)
+            d = _haversine(tel.latitude, tel.longitude, dest.latitude, dest.longitude)
+        else:
+            d = dest_distance
 
         if d <= 5:
             for entry in reversed(state.history):
@@ -228,26 +243,38 @@ class TriggerEvaluator:
         if tel is None:
             return None
 
-        # Cooldown check
         now = time.time()
         if now - state.last_push_time < self.cooldown:
             return None
 
-        triggers = [
-            self.check_emergency,
-            self.check_altitude_deviation,
-            self.check_heading_deviation,
-            self.check_airspace_infringement,
-            self.check_approach_handoff,
-            self.check_tower_handoff,
-            self.check_approach_clearance,
-            self.check_departure_handoff,
-            self.check_squawk_assignment,
-        ]
+        dest_distance = self._dest_distance(state)
 
-        for trigger_fn in triggers:
-            result = trigger_fn(state)
-            if result.should_fire:
-                return result
+        result = self.check_emergency(state)
+        if result.should_fire:
+            return result
+        result = self.check_altitude_deviation(state)
+        if result.should_fire:
+            return result
+        result = self.check_heading_deviation(state)
+        if result.should_fire:
+            return result
+        result = self.check_airspace_infringement(state)
+        if result.should_fire:
+            return result
+        result = self.check_approach_handoff(state, dest_distance=dest_distance)
+        if result.should_fire:
+            return result
+        result = self.check_tower_handoff(state, dest_distance=dest_distance)
+        if result.should_fire:
+            return result
+        result = self.check_approach_clearance(state, dest_distance=dest_distance)
+        if result.should_fire:
+            return result
+        result = self.check_departure_handoff(state)
+        if result.should_fire:
+            return result
+        result = self.check_squawk_assignment(state)
+        if result.should_fire:
+            return result
 
         return None

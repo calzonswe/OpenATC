@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from src.config import Settings
 from src.models.protocol import ClientMessage, MessageType, ServerMessage
-from src.models.state import ExchangeEntry
+from src.models.state import CallsignState, ExchangeEntry
 from src.models.telemetry import Telemetry
 from src.services.atc_session import ATCSession
 from src.services.llm import LLMService
@@ -39,6 +39,7 @@ connection_store = ConnectionStore()
 
 MAX_CONNECTIONS = 32
 _rate_limit: dict[str, float] = {}
+_processing_callsigns: set[str] = set()
 
 
 def _check_rate_limit(callsign: str, min_interval: float = 1.0) -> bool:
@@ -57,6 +58,7 @@ tts: Optional[TTSService] = None
 atc_session: Optional[ATCSession] = None
 trigger_evaluator: Optional[TriggerEvaluator] = None
 _trigger_task: Optional[asyncio.Task] = None
+_TRIGGER_CONCURRENCY = 8
 
 
 def _init_services():
@@ -113,6 +115,8 @@ async def shutdown():
             except Exception:
                 pass
         connection_store.unregister(callsign)
+        _rate_limit.pop(callsign, None)
+        _processing_callsigns.discard(callsign)
     logger.info("Shutdown complete")
 
 
@@ -152,10 +156,19 @@ async def process_audio_for_callsign(callsign: str):
             timeout=timeout,
         )
 
+        if transcription.strip():
+            await ws.send_text(ServerMessage(
+                type=MessageType.ATC_TEXT,
+                callsign=callsign,
+                text=f"[YOU] {transcription}",
+                payload={"kind": "transcription"},
+            ).model_dump_json())
+
         await ws.send_text(ServerMessage(
             type=MessageType.ATC_TEXT,
             callsign=callsign,
             text=atc_response,
+            payload={"kind": "response"},
         ).model_dump_json())
 
         role = atc_session.determine_role(state)
@@ -188,19 +201,70 @@ async def process_audio_for_callsign(callsign: str):
             callsign=callsign,
             text=f"Processing error: {e}",
         ).model_dump_json())
+    finally:
+        _processing_callsigns.discard(callsign)
+
+
+async def _push_trigger(callsign: str, state: CallsignState, result) -> None:
+    """Execute one trigger push: LLM + send + TTS."""
+    try:
+        system_prompt = atc_session.build_system_prompt(state, result.role)
+        prompt = (
+            f"ATC Trigger: {result.reason}\n\n"
+            f"Generate an appropriate ATC instruction for {callsign}. "
+            f"Use correct ICAO phraseology."
+        )
+        messages = [{"role": "user", "content": prompt}]
+        response = await llm.generate_sync(system_prompt, messages)
+
+        ws = connection_store.get_ws(callsign)
+        if not ws:
+            return
+
+        await ws.send_text(ServerMessage(
+            type=MessageType.PUSH_INSTRUCTION,
+            callsign=callsign,
+            text=response,
+            payload={"role": result.role, "reason": result.reason},
+        ).model_dump_json())
+
+        audio_pcm = await tts.synthesize(response, role=result.role)
+        if audio_pcm:
+            await ws.send_text(ServerMessage(
+                type=MessageType.ATC_AUDIO_START,
+                callsign=callsign,
+            ).model_dump_json())
+            chunk_size = 4096
+            for i in range(0, len(audio_pcm), chunk_size):
+                await ws.send_bytes(audio_pcm[i:i + chunk_size])
+            await ws.send_text(ServerMessage(
+                type=MessageType.ATC_AUDIO_END,
+                callsign=callsign,
+            ).model_dump_json())
+
+        state.add_exchange(ExchangeEntry(
+            role=result.role,
+            text=response,
+            timestamp=time.time(),
+            is_push=True,
+        ))
+    except Exception as e:
+        logger.error(f"Trigger push failed for {callsign}: {e}")
 
 
 async def trigger_loop():
     """Background task: evaluate triggers for all connected aircraft."""
+    sem = asyncio.Semaphore(_TRIGGER_CONCURRENCY)
     while True:
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:
             logger.info("Trigger loop cancelled")
             return
-        if not trigger_evaluator:
+        if not trigger_evaluator or not atc_session or not llm or not tts:
             continue
 
+        tasks = []
         for callsign in connection_store.all_callsigns():
             state = connection_store.get_state(callsign)
             if not state or not state.latest_telemetry:
@@ -217,52 +281,11 @@ async def trigger_loop():
 
             logger.info(f"Trigger fired for {callsign}: {result.reason}")
             state.last_push_time = time.time()
+            async with sem:
+                tasks.append(asyncio.create_task(_push_trigger(callsign, state, result)))
 
-            ws = connection_store.get_ws(callsign)
-            if not ws:
-                continue
-
-            try:
-                system_prompt = atc_session.build_system_prompt(state, result.role)
-                prompt = (
-                    f"ATC Trigger: {result.reason}\n\n"
-                    f"Generate an appropriate ATC instruction for {callsign}. "
-                    f"Use correct ICAO phraseology."
-                )
-                messages = [{"role": "user", "content": prompt}]
-                response = await llm.generate_sync(system_prompt, messages)
-
-                await ws.send_text(ServerMessage(
-                    type=MessageType.PUSH_INSTRUCTION,
-                    callsign=callsign,
-                    text=response,
-                    payload={"role": result.role, "reason": result.reason},
-                ).model_dump_json())
-
-                # Synthesize TTS for push
-                audio_pcm = await tts.synthesize(response, role=result.role)
-                if audio_pcm:
-                    await ws.send_text(ServerMessage(
-                        type=MessageType.ATC_AUDIO_START,
-                        callsign=callsign,
-                    ).model_dump_json())
-                    chunk_size = 4096
-                    for i in range(0, len(audio_pcm), chunk_size):
-                        await ws.send_bytes(audio_pcm[i:i + chunk_size])
-                    await ws.send_text(ServerMessage(
-                        type=MessageType.ATC_AUDIO_END,
-                        callsign=callsign,
-                    ).model_dump_json())
-
-                state.add_exchange(ExchangeEntry(
-                    role=result.role,
-                    text=response,
-                    timestamp=time.time(),
-                    is_push=True,
-                ))
-
-            except Exception as e:
-                logger.error(f"Trigger push failed for {callsign}: {e}")
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @app.websocket("/ws")
@@ -322,6 +345,13 @@ async def websocket_endpoint(ws: WebSocket):
                         connection_store.update_telemetry(callsign, tel)
 
                     elif msg.type == MessageType.AUDIO_START and callsign:
+                        if callsign in _processing_callsigns:
+                            await ws.send_text(ServerMessage(
+                                type=MessageType.ERROR,
+                                callsign=callsign,
+                                text="Previous transmission still processing",
+                            ).model_dump_json())
+                            continue
                         state = connection_store.get_state(callsign)
                         if state:
                             state.is_recording = True
@@ -332,6 +362,7 @@ async def websocket_endpoint(ws: WebSocket):
                         if state:
                             state.is_recording = False
                             if _check_rate_limit(callsign, min_interval=2.0):
+                                _processing_callsigns.add(callsign)
                                 asyncio.create_task(process_audio_for_callsign(callsign))
                             else:
                                 logger.warning(f"Rate limited audio from {callsign}")
@@ -351,5 +382,8 @@ async def websocket_endpoint(ws: WebSocket):
 
     except (WebSocketDisconnect, Exception) as e:
         logger.info(f"Disconnected: {callsign} ({e})")
+    finally:
         if callsign:
             connection_store.unregister(callsign)
+            _rate_limit.pop(callsign, None)
+            _processing_callsigns.discard(callsign)

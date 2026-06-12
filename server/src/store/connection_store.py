@@ -49,4 +49,4 @@ class ConnectionStore:
         return len(self._by_callsign)
 
     def all_callsigns(self) -> list[str]:
-        return list(self._by_callsign.keys())
+        return list(self._by_callsign)

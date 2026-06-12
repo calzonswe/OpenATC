@@ -20,7 +20,6 @@ class TTSService:
         self.voices_dir = Path(voices_dir)
         self.sample_rate = sample_rate
         self._voice_models: dict[str, Path] = {}
-        self._voice_paths: dict[str, Path] = {}
 
     def _discover_voices(self):
         """Scan voices directory for .onnx files and map roles."""
@@ -68,6 +67,7 @@ class TTSService:
                     "--config", str(json_path),
                     "--output-raw",
                     "--output-type", "raw",
+                    "--output-sampling-rate", str(self.sample_rate),
                 ],
                 input=text.encode("utf-8"),
                 capture_output=True,

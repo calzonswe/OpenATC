@@ -16,6 +16,7 @@ public partial class App : Application
         services.AddSingleton<SettingsService>();
         services.AddSingleton<SimConnectService>();
         services.AddSingleton<AudioCaptureService>();
+        services.AddSingleton<AudioOutputService>();
         services.AddSingleton<OpusCodec>();
         services.AddSingleton<WebSocketService>();
         services.AddSingleton<JoystickService>();

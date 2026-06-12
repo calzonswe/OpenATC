@@ -16,7 +16,14 @@ fi
 # Step 2: Wait for Ollama to be ready
 echo "[2/4] Waiting for Ollama at ${LLM_HOST:-http://ollama:11434}..."
 OLLAMA_HOST="${LLM_HOST:-http://ollama:11434}"
+RETRIES=30
+COUNT=0
 until curl -s "$OLLAMA_HOST/api/tags" > /dev/null 2>&1; do
+    COUNT=$((COUNT+1))
+    if [ $COUNT -ge $RETRIES ]; then
+        echo "ERROR: Ollama did not become ready after $RETRIES attempts"
+        exit 1
+    fi
     sleep 2
 done
 echo "      Ollama is ready"

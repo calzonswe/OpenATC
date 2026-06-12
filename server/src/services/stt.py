@@ -3,7 +3,6 @@
 import logging
 import struct
 import subprocess
-import tempfile
 import zlib
 from typing import Union
 
@@ -57,7 +56,7 @@ def _raw_opus_to_ogg(frames: list[bytes], sample_rate: int = 16000) -> bytes:
     id_packet = b"OpusHead"
     id_packet += struct.pack("B", 1)          # version
     id_packet += struct.pack("B", 1)          # output channel count
-    id_packet += struct.pack("<H", 0)         # pre-skip (0 for streaming)
+    id_packet += struct.pack("<H", 312)       # pre-skip (Opus decoder lookahead at 48kHz)
     id_packet += struct.pack("<I", sample_rate)  # input sample rate
     id_packet += struct.pack("<h", 0)         # output gain
     id_packet += struct.pack("B", 0)          # channel mapping family
@@ -110,30 +109,26 @@ class STTService:
             logger.error(f"Failed to load Whisper model: {e}")
             raise
 
-    def _decode_opus_to_pcm(self, opus_data: bytes) -> bytes:
-        """Decode Opus bytes to raw PCM 16-bit mono 16kHz using ffmpeg.
-
-        Handles both Ogg-wrapped Opus and raw Opus packets (from client).
-        """
-        with tempfile.NamedTemporaryFile(suffix=".opus") as tmp:
-            tmp.write(opus_data)
-            tmp.flush()
-            try:
-                result = subprocess.run(
-                    ["ffmpeg", "-y", "-i", tmp.name,
-                     "-f", "s16le", "-acodec", "pcm_s16le",
-                     "-ar", "16000", "-ac", "1",
-                     "-loglevel", "error", "pipe:1"],
-                    capture_output=True,
-                    timeout=30,
-                )
-                if result.returncode != 0:
-                    logger.error(f"ffmpeg decode failed: {result.stderr.decode()}")
-                    return b""
-                return result.stdout
-            except FileNotFoundError:
-                logger.warning("ffmpeg not found, cannot decode Opus audio")
+    @staticmethod
+    def _decode_opus_to_pcm(opus_data: bytes) -> bytes:
+        """Decode Opus bytes to raw PCM 16-bit mono 16kHz using ffmpeg (stdin pipe)."""
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", "pipe:0",
+                 "-f", "s16le", "-acodec", "pcm_s16le",
+                 "-ar", "16000", "-ac", "1",
+                 "-loglevel", "error", "pipe:1"],
+                input=opus_data,
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(f"ffmpeg decode failed: {result.stderr.decode()}")
                 return b""
+            return result.stdout
+        except FileNotFoundError:
+            logger.warning("ffmpeg not found, cannot decode Opus audio")
+            return b""
 
     @staticmethod
     def _is_opus_data(data: bytes) -> bool:
@@ -185,8 +180,7 @@ class STTService:
             logger.warning("No PCM data to transcribe")
             return ""
 
-        audio_int16 = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-        audio_float32 = audio_int16 / 32768.0
+        audio_float32 = np.frombuffer(pcm, dtype=np.int16, count=len(pcm) // 2).astype(np.float32) / 32768.0
 
         segments, _ = self._model.transcribe(
             audio_float32,

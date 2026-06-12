@@ -60,7 +60,7 @@ class ATCSession:
                     return "ground"
                 # Below 500ft and in pattern → tower
                 return "tower"
-            return "tower"
+            return "center"
 
         if alt <= 10000:
             # Within 40nm of destination → approach

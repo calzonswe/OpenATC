@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly WebSocketService _wsService;
     private readonly SimConnectService _simConnectService;
     private readonly AudioCaptureService _audioCaptureService;
+    private readonly AudioOutputService _audioOutputService;
     private readonly AutoConnectService _autoConnectService;
     private readonly ObservableCollection<string> _logEntries = new();
 
@@ -29,13 +30,17 @@ public partial class MainWindow : Window
         _wsService = app.GetService<WebSocketService>();
         _simConnectService = app.GetService<SimConnectService>();
         _audioCaptureService = app.GetService<AudioCaptureService>();
+        _audioOutputService = app.GetService<AudioOutputService>();
         _autoConnectService = app.GetService<AutoConnectService>();
 
         AtcLog.ItemsSource = _logEntries;
 
         _wsService.ConnectionStateChanged += OnConnectionStateChanged;
         _wsService.MessageReceived += OnMessageReceived;
+        _wsService.AudioFrameReceived += OnAudioFrameReceived;
         _simConnectService.ConnectionStatusChanged += OnSimStateChanged;
+        _simConnectService.TelemetryUpdated += OnTelemetryUpdated;
+        _audioCaptureService.OpusFrameAvailable += OnOpusFrameAvailable;
 
         _autoConnectService.Start();
     }
@@ -68,6 +73,23 @@ public partial class MainWindow : Window
                 AddLog($"[ATC] {response.Text}");
             }
         });
+    }
+
+    private void OnAudioFrameReceived(byte[] pcmData)
+    {
+        _audioOutputService.EnqueuePcm(pcmData);
+    }
+
+    private void OnTelemetryUpdated(Telemetry telemetry)
+    {
+        var settings = _settingsService.Load();
+        telemetry.Callsign = settings.Callsign;
+        _ = _wsService.SendTelemetryAsync(telemetry);
+    }
+
+    private void OnOpusFrameAvailable(byte[] opusData)
+    {
+        _ = _wsService.SendBinaryAsync(opusData);
     }
 
     private void AddLog(string message)
@@ -146,6 +168,7 @@ public partial class MainWindow : Window
     {
         _autoConnectService.Stop();
         _audioCaptureService.Dispose();
+        _audioOutputService.Dispose();
         _simConnectService.Dispose();
         _wsService.Dispose();
         base.OnClosed(e);
